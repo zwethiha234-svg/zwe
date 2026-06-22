@@ -1,0 +1,1729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LedgerFlow — Multi-party Transaction Tracker</title>
+<style>
+  :root {
+    --brand: #4f46e5;
+    --brand-dark: #4338ca;
+    --brand-light: #6366f1;
+    --gold: #d97706;
+    --gold-light: #f59e0b;
+    --ok: #059669;
+    --warn: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; min-height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: #f3f4f6;
+    color: #111827;
+    line-height: 1.4;
+  }
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    font-family: inherit;
+    transition: background 0.12s ease, transform 0.05s ease;
+  }
+  button:active { transform: translateY(1px); }
+  .btn-primary { background: var(--brand); color: white; }
+  .btn-primary:hover { background: var(--brand-dark); }
+  .btn-secondary { background: #374151; color: white; }
+  .btn-secondary:hover { background: #1f2937; }
+  .btn-outline { background: transparent; color: var(--brand); border: 1px solid var(--brand); }
+  .btn-outline:hover { background: rgba(79,70,229,0.06); }
+  .btn-ghost { background: transparent; color: white; }
+  .btn-ghost:hover { background: rgba(255,255,255,0.1); }
+  .btn-danger { background: transparent; color: var(--warn); padding: 4px 10px; }
+  .btn-danger:hover { background: #fee2e2; }
+  .btn-add {
+    background: white; color: var(--brand);
+    border: 1px dashed #c7d2fe; padding: 6px 12px; font-size: 13px;
+  }
+  .btn-add:hover { background: #eef2ff; }
+  .btn-gold {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: white; font-weight: 600;
+  }
+  .btn-gold:hover { background: linear-gradient(135deg, #d97706, #b45309); }
+  .btn-link { background: transparent; color: var(--brand); padding: 4px 6px; font-size: 12px; }
+  .btn-link:hover { text-decoration: underline; }
+
+  /* === Auth Screen === */
+  .auth-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 60%, #ec4899 100%);
+    padding: 24px;
+  }
+  .auth-card {
+    background: white;
+    border-radius: 14px;
+    padding: 36px 32px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.25);
+  }
+  .auth-card .brand-row {
+    display: flex; align-items: center; gap: 10px; justify-content: center;
+    margin-bottom: 6px;
+  }
+  .auth-card .brand-name { font-size: 22px; font-weight: 700; color: #111827; letter-spacing: -0.3px; }
+  .tagline { text-align: center; color: #6b7280; font-size: 13px; margin-bottom: 22px; }
+  .auth-tabs {
+    display: flex; gap: 4px; margin-bottom: 18px;
+    background: #f3f4f6; padding: 4px; border-radius: 8px;
+  }
+  .auth-tab {
+    flex: 1; background: transparent; color: #6b7280;
+    padding: 8px; font-weight: 500; border-radius: 6px;
+  }
+  .auth-tab.active { background: white; color: var(--brand); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+  .auth-form { display: flex; flex-direction: column; gap: 12px; }
+  .auth-form label { font-size: 12px; font-weight: 500; color: #374151; display: block; margin-bottom: 4px; }
+  .auth-form input {
+    width: 100%; border: 1px solid #d1d5db;
+    border-radius: 6px; padding: 10px 12px;
+    font-size: 14px; font-family: inherit;
+  }
+  .auth-form input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(79,70,229,0.1); }
+  .auth-error { background: #fef2f2; color: var(--warn); padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+  .auth-info {
+    background: #eef2ff; color: #4338ca;
+    padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-top: 12px;
+  }
+  .auth-submit {
+    background: var(--brand); color: white;
+    padding: 12px; font-size: 14px; font-weight: 600; margin-top: 8px;
+  }
+  .auth-submit:hover { background: var(--brand-dark); }
+
+  /* === App Header === */
+  .app-header {
+    background: #111827;
+    color: white;
+    padding: 12px 20px;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    position: sticky; top: 0; z-index: 30;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; color: white; }
+  .brand-logo { width: 30px; height: 30px; flex-shrink: 0; }
+  .brand-name { font-size: 17px; font-weight: 700; letter-spacing: -0.3px; }
+  .brand-name small { display: block; font-size: 9px; font-weight: 400; opacity: 0.6; letter-spacing: 1px; text-transform: uppercase; }
+
+  .search-bar { flex: 1; min-width: 180px; max-width: 480px; position: relative; }
+  .search-bar input {
+    width: 100%;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: white;
+    border-radius: 6px;
+    padding: 7px 12px 7px 32px;
+    font-size: 13px; font-family: inherit;
+  }
+  .search-bar input::placeholder { color: rgba(255,255,255,0.5); }
+  .search-bar input:focus { outline: none; border-color: var(--brand-light); background: rgba(255,255,255,0.14); }
+  .search-bar::before {
+    content: ''; position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+    width: 14px; height: 14px;
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.55)' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><circle cx='11' cy='11' r='7'/><path d='M21 21l-4.3-4.3'/></svg>") center/contain no-repeat;
+  }
+
+  .plan-badge {
+    padding: 4px 10px; border-radius: 12px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+    text-transform: uppercase; cursor: pointer;
+    border: none; color: white;
+  }
+  .plan-badge.free { background: #4b5563; color: #d1d5db; }
+  .plan-badge.trial { background: var(--gold); }
+  .plan-badge.pro { background: linear-gradient(135deg, #f59e0b, #d97706); }
+  .plan-badge.expired { background: #7f1d1d; }
+
+  .user-menu { position: relative; }
+  .user-menu-btn {
+    background: rgba(255,255,255,0.08); color: white;
+    padding: 6px 12px; font-size: 13px;
+  }
+  .user-menu-btn:hover { background: rgba(255,255,255,0.16); }
+  .dropdown {
+    position: absolute; right: 0; top: calc(100% + 6px);
+    background: white; color: #111827;
+    border-radius: 8px; box-shadow: 0 12px 30px rgba(0,0,0,0.18);
+    min-width: 220px; overflow: hidden; z-index: 100;
+  }
+  .dropdown button {
+    width: 100%; background: white; color: #111827;
+    text-align: left; border-radius: 0;
+    padding: 10px 14px; font-size: 13px;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .dropdown button:last-child { border-bottom: none; }
+  .dropdown button:hover { background: #f9fafb; }
+  .dropdown .menu-section {
+    padding: 8px 14px; font-size: 10px;
+    color: #6b7280; text-transform: uppercase; font-weight: 600;
+    letter-spacing: 0.5px; background: #f9fafb;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .dropdown .menu-info { padding: 10px 14px; font-size: 12px; color: #374151; }
+  .dropdown .menu-info strong { display: block; color: #111827; margin-bottom: 2px; }
+
+  /* === Toolbar === */
+  .toolbar {
+    background: white;
+    padding: 10px 20px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    border-bottom: 1px solid #e5e7eb;
+    position: sticky; top: 54px; z-index: 20;
+  }
+  .toolbar input[type="date"], .toolbar select {
+    border: 1px solid #d1d5db;
+    border-radius: 6px; padding: 6px 8px;
+    font-size: 12px; font-family: inherit;
+    background: white;
+  }
+  .toolbar .file-status {
+    font-size: 11px; color: #9ca3af;
+    margin-left: auto; white-space: nowrap;
+    max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+  }
+  .toolbar .file-status.dirty { color: #d97706; }
+  .toolbar .file-status.saved { color: var(--ok); }
+  .toolbar .file-status.flash { color: var(--ok); font-weight: 600; }
+  .toolbar-divider { width: 1px; height: 22px; background: #e5e7eb; margin: 0 4px; }
+  .filter-label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.4px; font-weight: 600; }
+
+  /* === Main === */
+  main { max-width: 1180px; margin: 22px auto; padding: 0 16px 80px; }
+
+  .summary {
+    background: white;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    display: flex; flex-wrap: wrap; gap: 28px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .summary-item { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+  .summary-item strong { display: block; font-size: 20px; color: #111827; font-weight: 600; margin-top: 4px; letter-spacing: 0; text-transform: none; }
+
+  .empty {
+    background: white;
+    border-radius: 8px;
+    padding: 64px 24px;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .empty h2 { margin: 0 0 6px; font-size: 18px; color: #374151; }
+  .empty p { margin: 0; color: #6b7280; font-size: 14px; }
+  .empty button { margin-top: 14px; }
+
+  .transaction {
+    background: white;
+    border-radius: 8px;
+    margin-bottom: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    overflow: hidden;
+  }
+  .tx-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb; flex-wrap: wrap;
+  }
+  .tx-title {
+    flex: 1; min-width: 180px;
+    font-size: 15px; font-weight: 600;
+    border: 1px solid transparent; background: transparent;
+    padding: 6px 8px; border-radius: 4px;
+    color: #111827; font-family: inherit;
+  }
+  .tx-title:hover { background: #f3f4f6; }
+  .tx-title:focus { outline: none; border-color: var(--brand); background: white; }
+  .tx-date, .tx-currency, .tx-category {
+    border: 1px solid #d1d5db; border-radius: 4px;
+    padding: 5px 8px; font-size: 13px;
+    background: white; font-family: inherit;
+  }
+  .tx-currency { width: 90px; }
+  .tx-category { width: 130px; font-size: 12px; color: #4b5563; }
+
+  .tx-totals { font-size: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .pill { padding: 4px 10px; border-radius: 12px; font-weight: 500; background: #f3f4f6; color: #374151; white-space: nowrap; }
+  .pill.out { background: #fff7ed; color: #c2410c; }
+  .pill.in { background: #ecfdf5; color: #047857; }
+  .pill.balance { background: #eff6ff; color: #1d4ed8; }
+  .pill.balance.warn { background: #fef2f2; color: var(--warn); }
+
+  .tx-body { padding: 14px 16px 16px; }
+  .tx-note {
+    width: 100%; border: 1px solid #e5e7eb; border-radius: 4px;
+    padding: 6px 8px; font-size: 13px; margin-bottom: 14px;
+    resize: vertical; min-height: 32px;
+    font-family: inherit; color: #374151;
+  }
+  .tx-note:focus, .tx-date:focus, .tx-currency:focus, .tx-category:focus { outline: none; border-color: var(--brand); }
+
+  .section { border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+  .section-out { background: #fff7ed; border: 1px solid #fed7aa; }
+  .section-in { background: #ecfdf5; border: 1px solid #a7f3d0; }
+  .section-title {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 0.6px; text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .section-out .section-title { color: #c2410c; }
+  .section-in .section-title { color: #047857; }
+  .section-subtotal { margin-left: auto; font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 12px; }
+  .breakdown { font-size: 11px; color: #6b7280; margin-top: 6px; padding-left: 2px; }
+
+  .party {
+    background: white; border-radius: 6px;
+    padding: 8px 10px; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .section-out .party { border: 1px solid #fdba74; }
+  .section-in .party { border: 1px solid #6ee7b7; }
+
+  .label {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.6px;
+    text-transform: uppercase; padding: 3px 7px; border-radius: 3px;
+    color: white; flex-shrink: 0;
+  }
+  .label.out { background: #ea580c; }
+  .label.in { background: var(--ok); }
+
+  .name-input, .method-input, .amount-input {
+    border: 1px solid #d1d5db; border-radius: 4px;
+    padding: 6px 9px; font-size: 13px;
+    background: white; font-family: inherit;
+  }
+  .name-input:focus, .method-input:focus, .amount-input:focus { outline: none; border-color: var(--brand); }
+  .name-input { flex: 1; min-width: 120px; }
+  .method-input { width: 130px; }
+  .amount-input { width: 110px; text-align: right; }
+  .add-bar { margin-top: 4px; }
+
+  /* Pro upsell banner */
+  .pro-banner {
+    background: linear-gradient(135deg, #fef3c7, #fde68a);
+    border: 1px solid #fbbf24;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+    color: #78350f;
+  }
+  .pro-banner strong { color: #451a03; }
+  .pro-banner button { margin-left: auto; flex-shrink: 0; }
+
+  /* Modals */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 1000; padding: 20px;
+  }
+  .modal {
+    background: white; border-radius: 12px;
+    max-width: 540px; width: 100%;
+    max-height: 88vh; overflow: auto;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.3);
+  }
+  .modal-header {
+    padding: 18px 22px;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .modal-header h2 { margin: 0; font-size: 17px; font-weight: 600; flex: 1; }
+  .modal-header .close-btn {
+    background: transparent; color: #6b7280;
+    padding: 4px 10px; font-size: 18px;
+  }
+  .modal-header .close-btn:hover { background: #f3f4f6; color: #111827; }
+  .modal-body { padding: 22px; }
+  .modal-footer {
+    padding: 14px 22px;
+    background: #f9fafb;
+    border-top: 1px solid #e5e7eb;
+    display: flex; justify-content: flex-end; gap: 8px;
+  }
+
+  /* Pricing in upgrade modal */
+  .pricing-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+  }
+  .price-card {
+    border: 2px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .price-card.featured {
+    border-color: var(--brand);
+    background: #f5f3ff;
+    position: relative;
+  }
+  .price-card .price { font-size: 26px; font-weight: 700; color: #111827; margin: 6px 0; }
+  .price-card .price small { font-size: 13px; font-weight: 400; color: #6b7280; }
+  .price-card h3 { margin: 0; font-size: 14px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }
+  .price-card ul { padding-left: 18px; margin: 12px 0 0; font-size: 13px; color: #374151; }
+  .price-card ul li { margin-bottom: 6px; }
+  .price-card .badge-pop {
+    position: absolute; top: -10px; right: 12px;
+    background: var(--brand); color: white;
+    padding: 3px 8px; border-radius: 8px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  /* Audit log */
+  .audit-list {
+    max-height: 60vh; overflow: auto;
+    border: 1px solid #e5e7eb; border-radius: 6px;
+  }
+  .audit-row {
+    padding: 10px 14px;
+    border-bottom: 1px solid #f3f4f6;
+    font-size: 13px;
+    display: flex; gap: 12px; align-items: baseline;
+  }
+  .audit-row:last-child { border-bottom: none; }
+  .audit-row time { font-size: 11px; color: #6b7280; min-width: 130px; }
+  .audit-row .action {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding: 2px 6px; border-radius: 3px;
+    background: #e0e7ff; color: var(--brand-dark);
+    min-width: 70px; text-align: center;
+  }
+  .audit-row .action.delete { background: #fee2e2; color: var(--warn); }
+  .audit-row .action.save { background: #d1fae5; color: var(--ok); }
+  .audit-row .detail { flex: 1; color: #374151; }
+
+  /* Footer */
+  .app-footer {
+    text-align: center;
+    padding: 20px;
+    color: #9ca3af;
+    font-size: 11px;
+  }
+
+  @media print {
+    .app-header, .toolbar, .pro-banner, .add-bar, .btn-danger, .modal-backdrop { display: none !important; }
+    main { max-width: none; margin: 0; padding: 0; }
+    .transaction { box-shadow: none; border: 1px solid #d1d5db; page-break-inside: avoid; }
+    body { background: white; }
+  }
+
+  @media (max-width: 640px) {
+    .name-input, .method-input, .amount-input { width: 100%; min-width: 0; flex: 1 1 100%; }
+    .tx-totals { width: 100%; }
+    .section-subtotal { margin-left: 0; }
+    .pricing-grid { grid-template-columns: 1fr; }
+    .toolbar { position: static; }
+    .search-bar { max-width: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ AUTH SCREEN ============ -->
+<div id="authScreen" class="auth-screen" hidden>
+  <div class="auth-card">
+    <div class="brand-row">
+      <svg viewBox="0 0 32 32" class="brand-logo" width="32" height="32">
+        <defs>
+          <linearGradient id="lfg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#6366f1"/>
+            <stop offset="100%" stop-color="#a855f7"/>
+          </linearGradient>
+        </defs>
+        <rect width="32" height="32" rx="7" fill="url(#lfg)"/>
+        <path d="M7 12 L18 12 L18 9 L24 13.5 L18 18 L18 15 L7 15 Z" fill="white"/>
+        <path d="M25 23 L14 23 L14 26 L8 21.5 L14 17 L14 20 L25 20 Z" fill="white" fill-opacity="0.7"/>
+      </svg>
+      <span class="brand-name">LedgerFlow</span>
+    </div>
+    <p class="tagline">Multi-party transaction tracking — track every transferer and receiver, balance every flow.</p>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="signup">Sign up</button>
+      <button class="auth-tab" data-tab="login">Log in</button>
+    </div>
+
+    <form class="auth-form" id="authForm" autocomplete="off">
+      <div>
+        <label for="authEmail">Email</label>
+        <input id="authEmail" type="email" required placeholder="you@example.com">
+      </div>
+      <div>
+        <label for="authPassword">Password</label>
+        <input id="authPassword" type="password" required minlength="6" placeholder="At least 6 characters">
+      </div>
+      <div id="authError" class="auth-error" hidden></div>
+      <button type="submit" class="auth-submit" id="authSubmit">Create account</button>
+    </form>
+
+    <div class="auth-info" id="authInfo">
+      ✦ Sign up gets you a free 14-day trial of LedgerFlow Pro. No credit card required.
+    </div>
+  </div>
+</div>
+
+<!-- ============ MAIN APP ============ -->
+<div id="app" hidden>
+  <header class="app-header">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" class="brand-logo" width="30" height="30">
+        <defs>
+          <linearGradient id="lfg2" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#6366f1"/>
+            <stop offset="100%" stop-color="#a855f7"/>
+          </linearGradient>
+        </defs>
+        <rect width="32" height="32" rx="7" fill="url(#lfg2)"/>
+        <path d="M7 12 L18 12 L18 9 L24 13.5 L18 18 L18 15 L7 15 Z" fill="white"/>
+        <path d="M25 23 L14 23 L14 26 L8 21.5 L14 17 L14 20 L25 20 Z" fill="white" fill-opacity="0.7"/>
+      </svg>
+      <div class="brand-name">LedgerFlow<small>v1.0</small></div>
+    </div>
+    <div class="search-bar">
+      <input id="searchInput" type="search" placeholder="Search title, name, method, note...">
+    </div>
+    <button class="plan-badge" id="planBadge">Free</button>
+    <div class="user-menu">
+      <button class="user-menu-btn" id="userMenuBtn">Account ▾</button>
+      <div class="dropdown" id="userDropdown" hidden>
+        <div class="menu-info">
+          <strong id="menuUserEmail"></strong>
+          <span id="menuUserPlan">Free</span>
+        </div>
+        <button id="upgradeBtn">Upgrade to Pro</button>
+        <button id="licenseBtn">Enter License Key</button>
+        <button id="auditBtn">Audit Log</button>
+        <button id="aboutBtn">About LedgerFlow</button>
+        <button id="logoutBtn">Log out</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <button class="btn-primary" id="addTxBtn">+ New Transaction</button>
+    <span class="toolbar-divider"></span>
+    <button class="btn-secondary" id="openBtn">Open</button>
+    <button class="btn-primary" id="saveBtn" title="Save (Ctrl+S)">Save</button>
+    <button class="btn-secondary" id="saveAsBtn">Save As</button>
+    <span class="toolbar-divider"></span>
+    <button class="btn-outline" id="exportCsvBtn" title="Export to CSV">Export CSV</button>
+    <button class="btn-outline" id="printBtn" title="Print or save as PDF">Print / PDF</button>
+    <span class="toolbar-divider"></span>
+    <span class="filter-label">From</span>
+    <input type="date" id="filterFrom">
+    <span class="filter-label">To</span>
+    <input type="date" id="filterTo">
+    <select id="filterCurrency"><option value="">All currencies</option></select>
+    <button class="btn-link" id="clearFiltersBtn">Clear</button>
+    <span class="file-status" id="fileStatus">No file selected</span>
+    <input type="file" id="importFile" accept="application/json,.json" hidden>
+  </div>
+
+  <main>
+    <div id="proBanner"></div>
+    <div class="summary" id="summary"></div>
+    <div id="transactions"></div>
+  </main>
+
+  <footer class="app-footer">
+    LedgerFlow v1.0.0 · &copy; 2026 LedgerFlow. All rights reserved. ·
+    <button class="btn-link" id="footerAbout">About</button>
+  </footer>
+</div>
+
+<datalist id="paymentMethods"></datalist>
+
+<script>
+'use strict';
+
+// ===================== CONSTANTS =====================
+const APP_NAME = 'LedgerFlow';
+const APP_VERSION = '1.0.0';
+const APP_YEAR = 2026;
+const FREE_TX_LIMIT = 5;
+const TRIAL_DAYS = 14;
+
+const AUTH_USERS_KEY = 'lf_users';
+const AUTH_SESSION_KEY = 'lf_session';
+const LEGACY_KEYS = ['transactionTrackerState_v1', 'transactionTrackerState_v2'];
+const HANDLE_DB = 'lf_handles_v1';
+const HANDLE_STORE = 'handles';
+
+const DEFAULT_METHODS = ['Zelle', 'KPay', 'Cash', 'Banking', 'Venmo', 'PayPal', 'Wire', 'Check', 'Crypto'];
+const CURRENCIES = [
+  { code: 'USD', symbol: '$' },
+  { code: 'EUR', symbol: '€' },
+  { code: 'GBP', symbol: '£' },
+  { code: 'JPY', symbol: '¥' },
+  { code: 'KRW', symbol: '₩' },
+  { code: 'CNY', symbol: '¥' },
+  { code: 'INR', symbol: '₹' },
+  { code: 'MMK', symbol: 'K' },
+  { code: 'THB', symbol: '฿' },
+  { code: 'SGD', symbol: 'S$' },
+  { code: 'AUD', symbol: 'A$' },
+  { code: 'CAD', symbol: 'C$' }
+];
+
+// Demo license keys — any key matching the LFPRO-XXXX-XXXX-XXXX format also works
+const VALID_LICENSES = new Set([
+  'LFPRO-DEMO-2026-TEST',
+  'LFPRO-PREM-1234-5678'
+]);
+
+const HAS_FSA = typeof window.showSaveFilePicker === 'function'
+             && typeof window.showOpenFilePicker === 'function';
+
+// ===================== APP STATE =====================
+let state = { transactions: [] };
+let currentUser = null;
+let currentFileHandle = null;
+let currentFileName = '';
+let isDirty = false;
+let searchQuery = '';
+let filterFrom = '';
+let filterTo = '';
+let filterCurrencyVal = '';
+let flashTimer = null;
+let auditCache = [];
+
+// ===================== UTIL =====================
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const num = (v) => { const n = parseFloat(v); return isNaN(n) ? 0 : n; };
+const fmt = (n) => num(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const escapeHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const csvEscape = (s) => { s = String(s == null ? '' : s); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+
+function el(tag, props, ...children) {
+  const e = document.createElement(tag);
+  if (props) {
+    for (const [k, v] of Object.entries(props)) {
+      if (v == null || v === false) continue;
+      if (k === 'class') e.className = v;
+      else if (k === 'style') Object.assign(e.style, v);
+      else if (k === 'dataset') Object.assign(e.dataset, v);
+      else if (k.startsWith('on') && typeof v === 'function') e.addEventListener(k.slice(2).toLowerCase(), v);
+      else e.setAttribute(k, v);
+    }
+  }
+  for (const c of children.flat(Infinity)) {
+    if (c == null || c === false) continue;
+    e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  }
+  return e;
+}
+
+async function sha256(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getCurrencySymbol(code) {
+  const c = CURRENCIES.find(x => x.code === code);
+  return c ? c.symbol : (code || '');
+}
+function fmtMoney(n, currency) {
+  const sym = getCurrencySymbol(currency || 'USD');
+  return sym + fmt(n);
+}
+
+// ===================== AUTH =====================
+function loadUsers() {
+  try { return JSON.parse(localStorage.getItem(AUTH_USERS_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveUsers(users) {
+  localStorage.setItem(AUTH_USERS_KEY, JSON.stringify(users));
+}
+function getSession() {
+  try { return JSON.parse(localStorage.getItem(AUTH_SESSION_KEY) || 'null'); }
+  catch { return null; }
+}
+function setSession(email) {
+  if (email) localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify({ email }));
+  else localStorage.removeItem(AUTH_SESSION_KEY);
+}
+
+async function signup(email, password) {
+  email = email.trim().toLowerCase();
+  if (!email || !password) throw new Error('Email and password required');
+  if (password.length < 6) throw new Error('Password must be at least 6 characters');
+  const users = loadUsers();
+  if (users.find(u => u.email === email)) throw new Error('That email is already registered');
+  const passwordHash = await sha256(password + ':' + email);
+  const user = {
+    email,
+    passwordHash,
+    createdAt: new Date().toISOString(),
+    plan: 'trial',
+    trialEnds: new Date(Date.now() + TRIAL_DAYS * 86400000).toISOString(),
+    licenseKey: null,
+    preferredCurrency: 'USD'
+  };
+  users.push(user);
+  saveUsers(users);
+  setSession(email);
+  currentUser = user;
+
+  // Migrate any legacy data into this user's storage on first signup
+  migrateLegacyDataToUser(user);
+  return user;
+}
+
+async function login(email, password) {
+  email = email.trim().toLowerCase();
+  const users = loadUsers();
+  const user = users.find(u => u.email === email);
+  if (!user) throw new Error('No account found with that email');
+  const passwordHash = await sha256(password + ':' + email);
+  if (user.passwordHash !== passwordHash) throw new Error('Wrong password');
+  setSession(email);
+  currentUser = user;
+  return user;
+}
+
+function logout() {
+  if (isDirty && !confirm('You have unsaved changes. Log out anyway?')) return;
+  setSession(null);
+  currentUser = null;
+  state = { transactions: [] };
+  currentFileHandle = null;
+  currentFileName = '';
+  isDirty = false;
+  location.reload();
+}
+
+function refreshCurrentUser() {
+  if (!currentUser) return null;
+  const users = loadUsers();
+  const fresh = users.find(u => u.email === currentUser.email);
+  if (fresh) currentUser = fresh;
+  return currentUser;
+}
+
+function updateCurrentUser(patch) {
+  if (!currentUser) return;
+  const users = loadUsers();
+  const idx = users.findIndex(u => u.email === currentUser.email);
+  if (idx < 0) return;
+  Object.assign(users[idx], patch);
+  saveUsers(users);
+  currentUser = users[idx];
+}
+
+function migrateLegacyDataToUser(user) {
+  for (const k of LEGACY_KEYS) {
+    try {
+      const raw = localStorage.getItem(k);
+      if (!raw) continue;
+      const data = JSON.parse(raw);
+      if (data && Array.isArray(data.transactions) && data.transactions.length) {
+        const userKey = userDataKey(user.email);
+        const existing = localStorage.getItem(userKey);
+        if (!existing) {
+          localStorage.setItem(userKey, JSON.stringify(data));
+        }
+      }
+    } catch {}
+  }
+}
+
+// ===================== PLAN / LICENSE =====================
+function planInfo(user) {
+  user = user || currentUser;
+  if (!user) return { plan: 'none', label: '—' };
+  if (user.licenseKey) return { plan: 'pro', label: 'Pro' };
+  if (user.plan === 'trial' && user.trialEnds) {
+    const ms = new Date(user.trialEnds).getTime() - Date.now();
+    if (ms > 0) {
+      const days = Math.ceil(ms / 86400000);
+      return { plan: 'trial', label: 'Trial · ' + days + 'd', daysLeft: days };
+    }
+    return { plan: 'expired', label: 'Trial expired' };
+  }
+  return { plan: 'free', label: 'Free' };
+}
+
+function isPro() {
+  const p = planInfo();
+  return p.plan === 'pro' || p.plan === 'trial';
+}
+
+function validateLicense(key) {
+  if (!key) return false;
+  key = key.trim().toUpperCase();
+  if (VALID_LICENSES.has(key)) return true;
+  return /^LFPRO-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(key);
+}
+
+function activateLicense(key) {
+  key = key.trim().toUpperCase();
+  if (!validateLicense(key)) throw new Error('Invalid license key format. Expected LFPRO-XXXX-XXXX-XXXX.');
+  updateCurrentUser({ licenseKey: key, plan: 'pro' });
+  audit('LICENSE', 'Activated license: ' + key.slice(0, 10) + '...');
+}
+
+// ===================== PER-USER STORAGE =====================
+function userDataKey(email) { return 'lf_data_' + (email || (currentUser && currentUser.email)); }
+function userAuditKey(email) { return 'lf_audit_' + (email || (currentUser && currentUser.email)); }
+
+function loadUserState() {
+  const k = userDataKey();
+  if (!k.endsWith('undefined')) {
+    try {
+      const raw = localStorage.getItem(k);
+      if (raw) state = JSON.parse(raw);
+    } catch { state = { transactions: [] }; }
+  }
+  if (!state || typeof state !== 'object') state = {};
+  if (!Array.isArray(state.transactions)) state.transactions = [];
+  state.transactions.forEach(tx => {
+    if (!Array.isArray(tx.transferers)) tx.transferers = [];
+    if (!Array.isArray(tx.receivers)) tx.receivers = [];
+    if (!tx.currency) tx.currency = (currentUser && currentUser.preferredCurrency) || 'USD';
+    if (!tx.category) tx.category = '';
+    tx.transferers.forEach(p => {
+      if (p.method == null) p.method = '';
+      if (Array.isArray(p.receivers)) {
+        p.receivers.forEach(rcv => tx.receivers.push({
+          id: rcv.id || uid(), name: rcv.name || '',
+          method: rcv.method || '', amount: num(rcv.amount)
+        }));
+        delete p.receivers;
+      }
+    });
+    tx.receivers.forEach(p => { if (p.method == null) p.method = ''; });
+  });
+}
+
+function saveLocalCache() {
+  const k = userDataKey();
+  try { localStorage.setItem(k, JSON.stringify(state)); } catch {}
+}
+
+function saveState() {
+  saveLocalCache();
+  setDirty(true);
+}
+
+// ===================== AUDIT LOG (Pro feature) =====================
+function loadAudit() {
+  if (!currentUser) return [];
+  try {
+    const raw = localStorage.getItem(userAuditKey());
+    auditCache = raw ? JSON.parse(raw) : [];
+  } catch { auditCache = []; }
+  return auditCache;
+}
+function audit(action, detail) {
+  if (!currentUser) return;
+  if (!isPro()) return;
+  auditCache.push({ at: new Date().toISOString(), action, detail });
+  if (auditCache.length > 1000) auditCache = auditCache.slice(-1000);
+  try { localStorage.setItem(userAuditKey(), JSON.stringify(auditCache)); } catch {}
+}
+
+// ===================== FILE HANDLE PERSISTENCE =====================
+function openHandleDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(HANDLE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(HANDLE_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function persistHandle(handle) {
+  if (!currentUser) return;
+  try {
+    const db = await openHandleDB();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(HANDLE_STORE, 'readwrite');
+      tx.objectStore(HANDLE_STORE).put(handle, currentUser.email);
+      tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+    });
+  } catch (e) { console.warn(e); }
+}
+async function loadPersistedHandle() {
+  if (!currentUser) return null;
+  try {
+    const db = await openHandleDB();
+    return await new Promise((res, rej) => {
+      const tx = db.transaction(HANDLE_STORE, 'readonly');
+      const req = tx.objectStore(HANDLE_STORE).get(currentUser.email);
+      req.onsuccess = () => res(req.result || null);
+      req.onerror = () => rej(req.error);
+    });
+  } catch { return null; }
+}
+
+// ===================== AGGREGATIONS =====================
+function partyTotal(list) { return list.reduce((s, p) => s + num(p.amount), 0); }
+function txOutTotal(tx) { return partyTotal(tx.transferers); }
+function txInTotal(tx) { return partyTotal(tx.receivers); }
+
+function methodBreakdown(list, currency) {
+  const map = new Map();
+  list.forEach(p => {
+    const a = num(p.amount);
+    if (!a) return;
+    const key = (p.method || '').trim() || '(no method)';
+    map.set(key, (map.get(key) || 0) + a);
+  });
+  if (map.size === 0) return '';
+  return Array.from(map.entries()).map(([k, v]) => k + ' ' + fmtMoney(v, currency)).join(' · ');
+}
+
+function visibleTransactions() {
+  return state.transactions.filter(tx => {
+    if (filterCurrencyVal && tx.currency !== filterCurrencyVal) return false;
+    if (filterFrom && (!tx.date || tx.date < filterFrom)) return false;
+    if (filterTo && (!tx.date || tx.date > filterTo)) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const hay = [
+        tx.title, tx.note, tx.category, tx.currency,
+        ...tx.transferers.map(p => p.name + ' ' + p.method),
+        ...tx.receivers.map(p => p.name + ' ' + p.method)
+      ].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+// ===================== UI: HEADER / PLAN / DROPDOWN =====================
+function refreshPlanBadge() {
+  const p = planInfo();
+  const badge = $('#planBadge');
+  if (!badge) return;
+  badge.textContent = p.label;
+  badge.className = 'plan-badge ' + p.plan;
+  $('#menuUserEmail').textContent = currentUser ? currentUser.email : '';
+  $('#menuUserPlan').textContent = p.label;
+  $('#upgradeBtn').textContent = (p.plan === 'pro') ? 'Manage License' : 'Upgrade to Pro';
+}
+
+function refreshProBanner() {
+  const banner = $('#proBanner');
+  if (!banner) return;
+  banner.innerHTML = '';
+  const p = planInfo();
+  if (p.plan === 'pro') return;
+  if (p.plan === 'expired') {
+    banner.append(el('div', { class: 'pro-banner' },
+      el('div', null,
+        el('strong', null, 'Your trial has ended.'),
+        ' Upgrade to keep using audit log, CSV export, and unlimited transactions.'
+      ),
+      el('button', { class: 'btn-gold', onclick: () => openModal('upgrade') }, 'Upgrade now')
+    ));
+  } else if (p.plan === 'trial') {
+    banner.append(el('div', { class: 'pro-banner' },
+      el('div', null,
+        el('strong', null, p.daysLeft + ' day' + (p.daysLeft !== 1 ? 's' : '') + ' left in your Pro trial.'),
+        ' All features are unlocked until your trial ends.'
+      ),
+      el('button', { class: 'btn-gold', onclick: () => openModal('upgrade') }, 'Upgrade')
+    ));
+  } else if (p.plan === 'free' && state.transactions.length >= FREE_TX_LIMIT) {
+    banner.append(el('div', { class: 'pro-banner' },
+      el('div', null,
+        el('strong', null, 'You\'ve hit the Free plan limit of ' + FREE_TX_LIMIT + ' transactions.'),
+        ' Upgrade to Pro for unlimited transactions plus audit log and CSV export.'
+      ),
+      el('button', { class: 'btn-gold', onclick: () => openModal('upgrade') }, 'Upgrade to Pro')
+    ));
+  }
+}
+
+// ===================== UI: FILE STATUS =====================
+function setDirty(d) { isDirty = !!d; updateFileStatus(); }
+function updateFileStatus() {
+  const elS = $('#fileStatus');
+  if (!elS) return;
+  let txt, cls = 'file-status';
+  if (currentFileName) {
+    txt = currentFileName + (isDirty ? ' • unsaved changes' : ' • saved');
+    cls += isDirty ? ' dirty' : ' saved';
+  } else {
+    txt = isDirty ? 'Unsaved (no file)' : 'No file selected';
+    if (isDirty) cls += ' dirty';
+  }
+  elS.textContent = txt;
+  elS.className = cls;
+}
+function flashStatus(msg) {
+  const elS = $('#fileStatus');
+  if (!elS) return;
+  elS.textContent = msg;
+  elS.className = 'file-status flash';
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(updateFileStatus, 1500);
+}
+
+// ===================== FILE I/O =====================
+async function ensureWritePermission(handle) {
+  if (!handle) return false;
+  let p = await handle.queryPermission({ mode: 'readwrite' });
+  if (p === 'granted') return true;
+  p = await handle.requestPermission({ mode: 'readwrite' });
+  return p === 'granted';
+}
+async function writeStateToHandle(handle) {
+  const writable = await handle.createWritable();
+  await writable.write(JSON.stringify(state, null, 2));
+  await writable.close();
+}
+async function save() {
+  if (!HAS_FSA) return downloadAsFile();
+  if (!currentFileHandle) return saveAs();
+  try {
+    const ok = await ensureWritePermission(currentFileHandle);
+    if (!ok) { alert('Permission to write the file was denied. Use "Save As" to pick a new location.'); return; }
+    await writeStateToHandle(currentFileHandle);
+    setDirty(false);
+    flashStatus('Saved to ' + currentFileName);
+    audit('SAVE', 'File: ' + currentFileName);
+  } catch (e) { alert('Save failed: ' + e.message); }
+}
+async function saveAs() {
+  if (!HAS_FSA) return downloadAsFile();
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: currentFileName || ('ledgerflow-' + new Date().toISOString().slice(0, 10) + '.json'),
+      types: [{ description: 'LedgerFlow data', accept: { 'application/json': ['.json'] } }]
+    });
+    await writeStateToHandle(handle);
+    currentFileHandle = handle;
+    currentFileName = handle.name;
+    await persistHandle(handle);
+    setDirty(false);
+    flashStatus('Saved as ' + handle.name);
+    audit('SAVE', 'File: ' + handle.name);
+  } catch (e) {
+    if (e.name !== 'AbortError') alert('Save As failed: ' + e.message);
+  }
+}
+async function openFile() {
+  if (isDirty && !confirm('You have unsaved changes. Discard and open another file?')) return;
+  if (HAS_FSA) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'LedgerFlow data', accept: { 'application/json': ['.json'] } }],
+        multiple: false
+      });
+      const file = await handle.getFile();
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!data || !Array.isArray(data.transactions)) throw new Error('Invalid file format');
+      state = data;
+      currentFileHandle = handle;
+      currentFileName = handle.name;
+      await persistHandle(handle);
+      saveLocalCache();
+      setDirty(false);
+      state.transactions.forEach(tx => {
+        if (!Array.isArray(tx.transferers)) tx.transferers = [];
+        if (!Array.isArray(tx.receivers)) tx.receivers = [];
+        if (!tx.currency) tx.currency = 'USD';
+        if (!tx.category) tx.category = '';
+      });
+      render();
+      flashStatus('Opened ' + handle.name);
+      audit('OPEN', 'File: ' + handle.name);
+    } catch (e) {
+      if (e.name !== 'AbortError') alert('Open failed: ' + e.message);
+    }
+  } else {
+    $('#importFile').click();
+  }
+}
+function downloadAsFile() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = currentFileName || ('ledgerflow-' + new Date().toISOString().slice(0, 10) + '.json');
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  setDirty(false);
+  flashStatus('Downloaded');
+  audit('SAVE', 'Downloaded JSON');
+}
+
+// ===================== CSV EXPORT =====================
+function exportCSV() {
+  if (!isPro()) { openModal('upgrade'); return; }
+  const txs = visibleTransactions();
+  const rows = [
+    ['Date', 'Title', 'Currency', 'Category', 'Side', 'Name', 'Method', 'Amount', 'Note']
+  ];
+  txs.forEach(tx => {
+    tx.transferers.forEach(p => rows.push([
+      tx.date || '', tx.title || '', tx.currency || '', tx.category || '',
+      'Out', p.name || '', p.method || '', num(p.amount).toFixed(2), tx.note || ''
+    ]));
+    tx.receivers.forEach(p => rows.push([
+      tx.date || '', tx.title || '', tx.currency || '', tx.category || '',
+      'In', p.name || '', p.method || '', num(p.amount).toFixed(2), tx.note || ''
+    ]));
+  });
+  const csv = rows.map(r => r.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'ledgerflow-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  flashStatus('CSV exported');
+  audit('EXPORT', 'CSV (' + txs.length + ' transactions)');
+}
+
+// ===================== METHOD DATALIST =====================
+function refreshMethodDatalist() {
+  const dl = $('#paymentMethods');
+  if (!dl) return;
+  const set = new Set(DEFAULT_METHODS);
+  state.transactions.forEach(tx => {
+    tx.transferers.forEach(p => p.method && set.add(p.method.trim()));
+    tx.receivers.forEach(p => p.method && set.add(p.method.trim()));
+  });
+  dl.innerHTML = '';
+  Array.from(set).filter(Boolean).sort().forEach(m => {
+    const opt = document.createElement('option'); opt.value = m; dl.appendChild(opt);
+  });
+}
+
+// ===================== RENDER: TRANSACTION =====================
+function balanceState(out, inn) {
+  const diff = Math.abs(out - inn);
+  const balanced = diff < 0.005;
+  const empty = out === 0 && inn === 0;
+  return { diff, balanced, empty };
+}
+
+function refreshTxView(txId) {
+  const tx = state.transactions.find(t => t.id === txId);
+  if (!tx) return;
+  const node = document.querySelector('.transaction[data-tx-id="' + txId + '"]');
+  if (!node) return;
+  const out = txOutTotal(tx);
+  const inn = txInTotal(tx);
+  const b = balanceState(out, inn);
+
+  const outPill = node.querySelector('.pill.out');
+  const inPill = node.querySelector('.pill.in');
+  const balPill = node.querySelector('.pill.balance');
+  if (outPill) outPill.textContent = 'Out: ' + fmtMoney(out, tx.currency);
+  if (inPill) inPill.textContent = 'In: ' + fmtMoney(inn, tx.currency);
+  if (balPill) {
+    if (b.empty) { balPill.textContent = ''; balPill.style.display = 'none'; }
+    else {
+      balPill.style.display = '';
+      balPill.textContent = b.balanced ? 'Balanced' : 'Off by ' + fmtMoney(b.diff, tx.currency);
+      balPill.classList.toggle('warn', !b.balanced);
+    }
+  }
+
+  const outSub = node.querySelector('.section-out .section-subtotal');
+  const inSub = node.querySelector('.section-in .section-subtotal');
+  if (outSub) outSub.textContent = fmtMoney(out, tx.currency);
+  if (inSub) inSub.textContent = fmtMoney(inn, tx.currency);
+
+  const outBreak = node.querySelector('.section-out .breakdown');
+  const inBreak = node.querySelector('.section-in .breakdown');
+  if (outBreak) outBreak.textContent = methodBreakdown(tx.transferers, tx.currency);
+  if (inBreak) inBreak.textContent = methodBreakdown(tx.receivers, tx.currency);
+}
+
+function refreshSummary() {
+  const sum = $('#summary');
+  if (!sum) return;
+  const txs = visibleTransactions();
+  const byCur = new Map();
+  txs.forEach(tx => {
+    const c = tx.currency || 'USD';
+    if (!byCur.has(c)) byCur.set(c, { out: 0, in: 0 });
+    byCur.get(c).out += txOutTotal(tx);
+    byCur.get(c).in += txInTotal(tx);
+  });
+  sum.innerHTML = '';
+  sum.append(
+    el('div', { class: 'summary-item' }, 'Showing', el('strong', null, String(txs.length) + ' / ' + state.transactions.length))
+  );
+  if (byCur.size === 0) {
+    sum.append(
+      el('div', { class: 'summary-item' }, 'Total transferred', el('strong', null, '—')),
+      el('div', { class: 'summary-item' }, 'Total received', el('strong', null, '—'))
+    );
+  } else {
+    Array.from(byCur.entries()).sort().forEach(([c, v]) => {
+      sum.append(
+        el('div', { class: 'summary-item' }, 'Out (' + c + ')', el('strong', null, fmtMoney(v.out, c))),
+        el('div', { class: 'summary-item' }, 'In (' + c + ')', el('strong', null, fmtMoney(v.in, c)))
+      );
+    });
+  }
+}
+
+function renderParty(tx, list, party, kind) {
+  const isOut = kind === 'out';
+  return el('div', { class: 'party', dataset: { partyId: party.id } },
+    el('span', { class: 'label ' + kind }, isOut ? 'From' : 'To'),
+    el('input', {
+      class: 'name-input',
+      placeholder: isOut ? 'Transferer name' : 'Receiver name',
+      value: party.name || '',
+      oninput: (e) => { party.name = e.target.value; saveState(); }
+    }),
+    el('input', {
+      class: 'method-input', list: 'paymentMethods',
+      placeholder: 'Method (Zelle, Cash...)',
+      value: party.method || '',
+      oninput: (e) => { party.method = e.target.value; saveState(); refreshTxView(tx.id); },
+      onchange: () => refreshMethodDatalist()
+    }),
+    el('input', {
+      class: 'amount-input', type: 'number', step: '0.01',
+      placeholder: '0.00', value: party.amount ? party.amount : '',
+      oninput: (e) => {
+        party.amount = num(e.target.value);
+        saveState();
+        refreshTxView(tx.id);
+        refreshSummary();
+      }
+    }),
+    el('button', {
+      class: 'btn-danger', title: 'Remove',
+      onclick: () => {
+        const idx = list.indexOf(party);
+        if (idx >= 0) list.splice(idx, 1);
+        audit(isOut ? 'REMOVE_OUT' : 'REMOVE_IN', (party.name || '(unnamed)') + ' from ' + (tx.title || 'transaction'));
+        saveState(); render();
+      }
+    }, 'Remove')
+  );
+}
+
+function renderSection(tx, kind) {
+  const isOut = kind === 'out';
+  const list = isOut ? tx.transferers : tx.receivers;
+  const subtotal = partyTotal(list);
+  const breakdown = methodBreakdown(list, tx.currency);
+  return el('div', { class: 'section section-' + kind },
+    el('div', { class: 'section-title' },
+      isOut ? 'Transferers (paying out)' : 'Receivers (receiving)',
+      el('span', { class: 'section-subtotal' }, fmtMoney(subtotal, tx.currency))
+    ),
+    list.map(p => renderParty(tx, list, p, kind)),
+    el('div', { class: 'add-bar' },
+      el('button', {
+        class: 'btn-add',
+        onclick: () => {
+          list.push({ id: uid(), name: '', method: '', amount: 0 });
+          audit(isOut ? 'ADD_OUT' : 'ADD_IN', 'Added to ' + (tx.title || 'transaction'));
+          saveState(); render();
+          const txNode = document.querySelector('.transaction[data-tx-id="' + tx.id + '"]');
+          if (txNode) {
+            const inputs = txNode.querySelectorAll('.section-' + kind + ' .party .name-input');
+            const last = inputs[inputs.length - 1];
+            if (last) last.focus();
+          }
+        }
+      }, isOut ? '+ Add transferer' : '+ Add receiver')
+    ),
+    el('div', { class: 'breakdown' }, breakdown)
+  );
+}
+
+function renderTransaction(tx) {
+  const out = txOutTotal(tx);
+  const inn = txInTotal(tx);
+  const b = balanceState(out, inn);
+
+  const noteArea = el('textarea', {
+    class: 'tx-note', placeholder: 'Optional note...', rows: 1,
+    oninput: (e) => { tx.note = e.target.value; saveState(); }
+  });
+  noteArea.value = tx.note || '';
+
+  const currencySelect = el('select', {
+    class: 'tx-currency',
+    onchange: (e) => { tx.currency = e.target.value; saveState(); refreshTxView(tx.id); refreshSummary(); }
+  }, CURRENCIES.map(c => {
+    const opt = document.createElement('option');
+    opt.value = c.code; opt.textContent = c.code + ' ' + c.symbol;
+    if (tx.currency === c.code) opt.selected = true;
+    return opt;
+  }));
+
+  return el('div', { class: 'transaction', dataset: { txId: tx.id } },
+    el('div', { class: 'tx-header' },
+      el('input', {
+        class: 'tx-title', placeholder: 'Transaction title (e.g., Group payment, Trip expenses)',
+        value: tx.title || '',
+        oninput: (e) => { tx.title = e.target.value; saveState(); }
+      }),
+      el('input', {
+        class: 'tx-date', type: 'date', value: tx.date || '',
+        oninput: (e) => { tx.date = e.target.value; saveState(); refreshSummary(); }
+      }),
+      currencySelect,
+      el('input', {
+        class: 'tx-category', placeholder: 'Category', value: tx.category || '',
+        oninput: (e) => { tx.category = e.target.value; saveState(); }
+      }),
+      el('div', { class: 'tx-totals' },
+        el('span', { class: 'pill out' }, 'Out: ' + fmtMoney(out, tx.currency)),
+        el('span', { class: 'pill in' }, 'In: ' + fmtMoney(inn, tx.currency)),
+        el('span', {
+          class: 'pill balance' + (b.balanced ? '' : ' warn'),
+          style: b.empty ? { display: 'none' } : {}
+        }, b.empty ? '' : (b.balanced ? 'Balanced' : 'Off by ' + fmtMoney(b.diff, tx.currency)))
+      ),
+      el('button', {
+        class: 'btn-danger',
+        onclick: () => {
+          if (!confirm('Delete this entire transaction?')) return;
+          state.transactions = state.transactions.filter(t => t.id !== tx.id);
+          audit('DELETE', 'Transaction: ' + (tx.title || tx.id));
+          saveState(); render();
+        }
+      }, 'Delete')
+    ),
+    el('div', { class: 'tx-body' },
+      noteArea,
+      renderSection(tx, 'out'),
+      renderSection(tx, 'in')
+    )
+  );
+}
+
+function refreshFilterCurrencyOptions() {
+  const sel = $('#filterCurrency');
+  if (!sel) return;
+  const have = new Set(state.transactions.map(t => t.currency).filter(Boolean));
+  sel.innerHTML = '';
+  const all = el('option', { value: '' }, 'All currencies');
+  sel.append(all);
+  Array.from(have).sort().forEach(c => {
+    sel.append(el('option', { value: c }, c));
+  });
+  sel.value = filterCurrencyVal;
+}
+
+function render() {
+  refreshMethodDatalist();
+  refreshFilterCurrencyOptions();
+  refreshPlanBadge();
+  refreshProBanner();
+  const list = $('#transactions');
+  list.innerHTML = '';
+  const visible = visibleTransactions();
+  if (state.transactions.length === 0) {
+    list.append(el('div', { class: 'empty' },
+      el('h2', null, 'No transactions yet'),
+      el('p', null, 'Click "New Transaction" to record your first money flow.'),
+      el('button', { class: 'btn-primary', onclick: addTransaction }, '+ New Transaction')
+    ));
+  } else if (visible.length === 0) {
+    list.append(el('div', { class: 'empty' },
+      el('h2', null, 'No matches'),
+      el('p', null, 'Try adjusting search or filters.')
+    ));
+  } else {
+    visible.forEach(tx => list.append(renderTransaction(tx)));
+  }
+  refreshSummary();
+}
+
+// ===================== TRANSACTION CRUD =====================
+function addTransaction() {
+  const p = planInfo();
+  if (p.plan === 'free' && state.transactions.length >= FREE_TX_LIMIT) {
+    openModal('upgrade');
+    return;
+  }
+  if (p.plan === 'expired') {
+    openModal('upgrade');
+    return;
+  }
+  state.transactions.unshift({
+    id: uid(),
+    title: '',
+    date: new Date().toISOString().slice(0, 10),
+    note: '',
+    category: '',
+    currency: (currentUser && currentUser.preferredCurrency) || 'USD',
+    transferers: [],
+    receivers: []
+  });
+  audit('ADD_TX', 'New transaction created');
+  saveState(); render();
+  const first = document.querySelector('.transaction .tx-title');
+  if (first) first.focus();
+}
+
+// ===================== MODALS =====================
+function closeModal() {
+  const back = $('#modalBackdrop');
+  if (back) back.remove();
+}
+function makeModal(title, body, footer) {
+  const back = el('div', { class: 'modal-backdrop', id: 'modalBackdrop',
+    onclick: (e) => { if (e.target === back) closeModal(); }
+  });
+  const modal = el('div', { class: 'modal' },
+    el('div', { class: 'modal-header' },
+      el('h2', null, title),
+      el('button', { class: 'close-btn', onclick: closeModal }, '×')
+    ),
+    el('div', { class: 'modal-body' }, body),
+    footer && el('div', { class: 'modal-footer' }, footer)
+  );
+  back.append(modal);
+  document.body.append(back);
+}
+
+function openModal(type) {
+  closeModal();
+  if (type === 'about') return openAbout();
+  if (type === 'upgrade') return openUpgrade();
+  if (type === 'license') return openLicense();
+  if (type === 'audit') return openAudit();
+}
+
+function openAbout() {
+  makeModal('About ' + APP_NAME,
+    el('div', null,
+      el('div', { style: { display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '14px' } },
+        (() => {
+          const wrap = document.createElement('div');
+          wrap.innerHTML = '<svg viewBox="0 0 32 32" width="48" height="48"><defs><linearGradient id="ablf" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#6366f1"/><stop offset="100%" stop-color="#a855f7"/></linearGradient></defs><rect width="32" height="32" rx="7" fill="url(#ablf)"/><path d="M7 12 L18 12 L18 9 L24 13.5 L18 18 L18 15 L7 15 Z" fill="white"/><path d="M25 23 L14 23 L14 26 L8 21.5 L14 17 L14 20 L25 20 Z" fill="white" fill-opacity="0.7"/></svg>';
+          return wrap.firstChild;
+        })(),
+        el('div', null,
+          el('div', { style: { fontSize: '18px', fontWeight: '700' } }, APP_NAME),
+          el('div', { style: { fontSize: '12px', color: '#6b7280' } }, 'Version ' + APP_VERSION)
+        )
+      ),
+      el('p', { style: { fontSize: '13px', color: '#374151', lineHeight: '1.6' } },
+        APP_NAME + ' is a multi-party transaction tracker. Record every transferer and receiver of every transaction across multiple payment methods and currencies.'
+      ),
+      el('p', { style: { fontSize: '12px', color: '#6b7280', marginTop: '12px' } },
+        '© ' + APP_YEAR + ' LedgerFlow. All rights reserved.'
+      ),
+      el('p', { style: { fontSize: '11px', color: '#9ca3af', marginTop: '8px' } },
+        'Browser: data is stored locally and in files you choose. No data leaves your device.'
+      )
+    ),
+    el('button', { class: 'btn-primary', onclick: closeModal }, 'Close')
+  );
+}
+
+function openUpgrade() {
+  const p = planInfo();
+  const isProUser = p.plan === 'pro';
+  const body = el('div', null,
+    el('p', { style: { color: '#6b7280', fontSize: '13px', margin: '0 0 16px' } },
+      isProUser
+        ? 'You\'re currently on the Pro plan. Below is a summary.'
+        : 'Compare plans and unlock the full ' + APP_NAME + ' experience.'
+    ),
+    el('div', { class: 'pricing-grid' },
+      el('div', { class: 'price-card' },
+        el('h3', null, 'Free'),
+        el('div', { class: 'price' }, '$0', el('small', null, ' / forever')),
+        el('ul', null,
+          el('li', null, 'Up to ' + FREE_TX_LIMIT + ' transactions'),
+          el('li', null, 'Multi-currency support'),
+          el('li', null, 'Save to file & local backup'),
+          el('li', null, 'Basic search & filters')
+        )
+      ),
+      el('div', { class: 'price-card featured' },
+        el('span', { class: 'badge-pop' }, 'Most popular'),
+        el('h3', null, 'Pro'),
+        el('div', { class: 'price' }, '$9', el('small', null, ' / month')),
+        el('ul', null,
+          el('li', null, 'Unlimited transactions'),
+          el('li', null, 'Audit log of all changes'),
+          el('li', null, 'CSV export'),
+          el('li', null, 'Priority support')
+        ),
+        el('button', {
+          class: isProUser ? 'btn-secondary' : 'btn-gold',
+          style: { width: '100%', marginTop: '14px', padding: '10px' },
+          onclick: () => { closeModal(); openLicense(); }
+        }, isProUser ? 'View / replace license' : 'Activate with license key')
+      )
+    ),
+    el('p', { style: { fontSize: '11px', color: '#9ca3af', marginTop: '14px', textAlign: 'center' } },
+      'Demo build — no real payment is processed. Use a sample key on the next screen.'
+    )
+  );
+  makeModal('Plans', body,
+    el('button', { class: 'btn-secondary', onclick: closeModal }, 'Close')
+  );
+}
+
+function openLicense() {
+  const keyInput = el('input', {
+    type: 'text', id: 'licenseKeyInput',
+    placeholder: 'LFPRO-XXXX-XXXX-XXXX',
+    style: { width: '100%', padding: '10px 12px', fontSize: '14px', border: '1px solid #d1d5db', borderRadius: '6px', fontFamily: 'monospace', letterSpacing: '0.5px', textTransform: 'uppercase' },
+    value: (currentUser && currentUser.licenseKey) || ''
+  });
+  const errBox = el('div', { class: 'auth-error', style: { marginTop: '10px', display: 'none' } });
+
+  function attempt() {
+    const k = keyInput.value;
+    try {
+      activateLicense(k);
+      closeModal();
+      refreshPlanBadge();
+      refreshProBanner();
+      flashStatus('Pro activated');
+      alert('License activated! Welcome to ' + APP_NAME + ' Pro.');
+    } catch (e) {
+      errBox.textContent = e.message;
+      errBox.style.display = 'block';
+    }
+  }
+
+  makeModal('License Key',
+    el('div', null,
+      el('p', { style: { fontSize: '13px', color: '#374151', margin: '0 0 12px' } },
+        'Enter your license key to activate Pro.'
+      ),
+      keyInput,
+      errBox,
+      el('div', { style: { background: '#eef2ff', padding: '10px 12px', borderRadius: '6px', fontSize: '11px', color: '#4338ca', marginTop: '12px' } },
+        'Demo keys you can try: ',
+        el('code', { style: { background: 'white', padding: '1px 6px', borderRadius: '3px', marginLeft: '4px' } }, 'LFPRO-DEMO-2026-TEST'),
+        ' · ',
+        el('code', { style: { background: 'white', padding: '1px 6px', borderRadius: '3px' } }, 'LFPRO-PREM-1234-5678')
+      )
+    ),
+    [
+      el('button', { class: 'btn-secondary', onclick: closeModal }, 'Cancel'),
+      el('button', { class: 'btn-gold', onclick: attempt }, 'Activate')
+    ]
+  );
+
+  setTimeout(() => keyInput.focus(), 50);
+}
+
+function openAudit() {
+  if (!isPro()) { openModal('upgrade'); return; }
+  loadAudit();
+  const body = el('div', null);
+  if (auditCache.length === 0) {
+    body.append(el('p', { style: { color: '#6b7280', fontSize: '13px', textAlign: 'center', padding: '20px' } },
+      'No audit entries yet. Edits will be logged here.'
+    ));
+  } else {
+    const list = el('div', { class: 'audit-list' });
+    auditCache.slice().reverse().forEach(entry => {
+      const cls = entry.action.startsWith('DELETE') || entry.action.startsWith('REMOVE') ? 'delete'
+                : entry.action === 'SAVE' || entry.action === 'OPEN' ? 'save' : '';
+      list.append(el('div', { class: 'audit-row' },
+        el('time', null, new Date(entry.at).toLocaleString()),
+        el('span', { class: 'action ' + cls }, entry.action),
+        el('span', { class: 'detail' }, entry.detail || '')
+      ));
+    });
+    body.append(list);
+  }
+  makeModal('Audit log (' + auditCache.length + ')', body,
+    el('button', { class: 'btn-secondary', onclick: closeModal }, 'Close')
+  );
+}
+
+// ===================== AUTH SCREEN UI =====================
+function showAuthScreen() {
+  $('#authScreen').hidden = false;
+  $('#app').hidden = true;
+}
+function showApp() {
+  $('#authScreen').hidden = true;
+  $('#app').hidden = false;
+}
+
+let authMode = 'signup';
+function setAuthMode(mode) {
+  authMode = mode;
+  $$('.auth-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === mode));
+  $('#authSubmit').textContent = mode === 'signup' ? 'Create account' : 'Log in';
+  const info = $('#authInfo');
+  if (mode === 'signup') {
+    info.innerHTML = '✦ Sign up gets you a free 14-day trial of LedgerFlow Pro. No credit card required.';
+  } else {
+    info.innerHTML = 'Welcome back. Log in to access your transactions.';
+  }
+}
+
+async function handleAuthSubmit(e) {
+  e.preventDefault();
+  const email = $('#authEmail').value.trim();
+  const password = $('#authPassword').value;
+  const errBox = $('#authError');
+  errBox.hidden = true;
+  try {
+    if (authMode === 'signup') await signup(email, password);
+    else await login(email, password);
+    await onLoggedIn();
+  } catch (err) {
+    errBox.textContent = err.message;
+    errBox.hidden = false;
+  }
+}
+
+async function onLoggedIn() {
+  refreshCurrentUser();
+  loadUserState();
+  loadAudit();
+  saveLocalCache();
+  if (HAS_FSA) {
+    const h = await loadPersistedHandle();
+    if (h && h.name) { currentFileHandle = h; currentFileName = h.name; }
+  }
+  showApp();
+  render();
+  updateFileStatus();
+}
+
+// ===================== EVENT WIRING =====================
+function wireEvents() {
+  // Auth
+  $$('.auth-tab').forEach(t => t.addEventListener('click', () => setAuthMode(t.dataset.tab)));
+  $('#authForm').addEventListener('submit', handleAuthSubmit);
+
+  // App buttons
+  $('#addTxBtn').addEventListener('click', addTransaction);
+  $('#saveBtn').addEventListener('click', save);
+  $('#saveAsBtn').addEventListener('click', saveAs);
+  $('#openBtn').addEventListener('click', openFile);
+  $('#exportCsvBtn').addEventListener('click', exportCSV);
+  $('#printBtn').addEventListener('click', () => window.print());
+
+  $('#searchInput').addEventListener('input', (e) => { searchQuery = e.target.value; render(); });
+  $('#filterFrom').addEventListener('input', (e) => { filterFrom = e.target.value; render(); });
+  $('#filterTo').addEventListener('input', (e) => { filterTo = e.target.value; render(); });
+  $('#filterCurrency').addEventListener('change', (e) => { filterCurrencyVal = e.target.value; render(); });
+  $('#clearFiltersBtn').addEventListener('click', () => {
+    searchQuery = ''; filterFrom = ''; filterTo = ''; filterCurrencyVal = '';
+    $('#searchInput').value = ''; $('#filterFrom').value = ''; $('#filterTo').value = ''; $('#filterCurrency').value = '';
+    render();
+  });
+
+  // Plan badge → upgrade
+  $('#planBadge').addEventListener('click', () => openModal('upgrade'));
+
+  // User menu
+  const dd = $('#userDropdown');
+  $('#userMenuBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    dd.hidden = !dd.hidden;
+  });
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.user-menu')) dd.hidden = true;
+  });
+  $('#upgradeBtn').addEventListener('click', () => { dd.hidden = true; openModal('upgrade'); });
+  $('#licenseBtn').addEventListener('click', () => { dd.hidden = true; openModal('license'); });
+  $('#auditBtn').addEventListener('click', () => { dd.hidden = true; openModal('audit'); });
+  $('#aboutBtn').addEventListener('click', () => { dd.hidden = true; openModal('about'); });
+  $('#footerAbout').addEventListener('click', () => openModal('about'));
+  $('#logoutBtn').addEventListener('click', () => { dd.hidden = true; logout(); });
+
+  // Import fallback
+  $('#importFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || !Array.isArray(data.transactions)) throw new Error('Invalid file format');
+        state = data;
+        state.transactions.forEach(tx => {
+          if (!Array.isArray(tx.transferers)) tx.transferers = [];
+          if (!Array.isArray(tx.receivers)) tx.receivers = [];
+          if (!tx.currency) tx.currency = 'USD';
+          if (!tx.category) tx.category = '';
+        });
+        currentFileName = file.name;
+        currentFileHandle = null;
+        saveLocalCache();
+        setDirty(false);
+        render();
+        flashStatus('Opened ' + file.name);
+        audit('OPEN', 'File: ' + file.name);
+      } catch (err) { alert('Failed to open: ' + err.message); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  // Keyboard
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      if ($('#app').hidden) return;
+      e.preventDefault(); save();
+    }
+    if (e.key === 'Escape') closeModal();
+  });
+
+  // Beforeunload
+  window.addEventListener('beforeunload', (e) => {
+    if (isDirty) { e.preventDefault(); e.returnValue = ''; return ''; }
+  });
+}
+
+// ===================== INIT =====================
+(async function init() {
+  wireEvents();
+  setAuthMode('signup');
+  const session = getSession();
+  if (session && session.email) {
+    const users = loadUsers();
+    const u = users.find(x => x.email === session.email);
+    if (u) {
+      currentUser = u;
+      await onLoggedIn();
+      return;
+    }
+    setSession(null);
+  }
+  showAuthScreen();
+})();
+</script>
+</body>
+</html>
