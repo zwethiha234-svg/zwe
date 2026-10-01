@@ -255,3 +255,88 @@ Test 1 would have caught this regression on the day the streamer landed.
 - Roll sign differs between `drone3d.py` (`Rz(+roll)`) and the quaternion
   path in `ppo_gpu.py` (`Rz(-roll)`). The comment says they match; this was
   not verified here.
+
+---
+
+# Part 2: Options
+
+## Option 1: Quick fix for the Raspberry Pi transfer (about 120 lines, 2–3 days)
+
+**Principle.** Keep the policy headless. The autopilot owns the nose. The
+nose is pointed along the commanded course, so the drone looks and moves
+headful without any retraining and without the policy's untrained yaw channel
+ever reaching the vehicle. In-repo precedent: the "smooth" yaw profile in
+`tools/airsim_hop_cycle_qa.py:258-269` and `--yaw-follow` on AirSim.
+
+| Step | File | Change | Size |
+|---|---|---|---|
+| A | new `AiDroneFly/src/aidronefly/control/heading.py` | `course_yaw_deg(velocity_enu) = atan2(east, north)`; `step_yaw_toward(current, target, dt, max_rate)` with wrap and a 0.5 m/s deadband | ~30 lines |
+| B | `backends/px4.py` | ctor arg `yaw_mode = "hold" | "rate" | "follow_course"`. Under `follow_course`, `set_velocity` refuses a yaw rate; the streamer loop (`px4.py:2046-2048`) steps `_stream_yaw_deg` toward the course instead of integrating the rate. Expose `yaw_mode` in `setpoint_stream_status` | ~35 lines |
+| C | `backends/mock.py:112-127` | same `yaw_mode`; `step` moves heading toward course with the same helper so the law is verified on Mock first | ~12 lines |
+| D | `tools/fly_policy_px4.py`, `tools/fly_policy_mission.py` | `--yaw-mode` flag, default `hold` (today's behaviour). When not `rate`, null `yaw_rate_dps` in the command so evidence is honest. Record `yaw_mode` and measured yaw per tick. AirSim maps `follow_course` to `yaw_follow` | ~20 lines |
+| E1 | `tools/fly_policy_px4.py:prepare()` after line 1250 | refuse unless runner bounds equal `observation_manifest.reference_box`; add `--bounds-from-contract` so the attended run can fly the ±60 / 0–55 box without OSM. **This will refuse today's attended configuration. That is the point.** | ~15 lines |
+| E2 | `ppo_policy.py:178`, `core/types.py:74-81` | `drone.pitch = -state.attitude.pitch`; document nose-up positive; add a sign-pinning test (the current parity test copies pitch unsigned, so it cannot catch this) | ~10 lines |
+
+**Why no yaw re-sync is needed for the Pi flight.** In open space
+`raycast_obstacles` returns all ones (`drone3d.py:411-412`), so the only
+yaw-dependent observation slots are sin/cos yaw, and those are
+self-consistent with the virtual yaw. For `--city` flights add an opt-in
+`sync_yaw=True` that copies measured yaw into the virtual drone each tick.
+
+**Verification order.** Unit tests for the helper, Mock convergence, and the
+fake-MAVSDK streamer test (extend `tests/test_px4_setpoint_streamer.py`).
+Then Mock flight: `follow_course` and `hold` give the same position track and
+heading error under 20 deg while moving. Then PX4 SIH via
+`policy_px4_attended_run.py --bounds-from-contract --yaw-mode follow_course`.
+
+**Do not touch.** `yaw_rate_dps()`, the envelope yaw clamp, `applies_yaw_rate`,
+the contract JSON, `PARAM_ALLOWLIST`, the virtual pitch/roll internals,
+`physics_vzlead`, any default flag value. PX4 `MPC_YAW_MODE` is irrelevant in
+Offboard and is not in the param allowlist.
+
+**Rejected for the quick fix.** Re-syncing virtual yaw and continuing to stream
+the yaw rate. It cures the ghost but the rate is mixer noise from an untrained
+channel: a slow random wander, not nose-along-course.
+
+## Option 2: Structural fix (about 11.5 engineer-days, plus 3–5 days and GPU time if a truly headful policy is wanted)
+
+**Target architecture.**
+
+```
+MISSION TOOL      --heading-mode {hold | follow_course | policy}   decided once, banked in flight.json
+      |
+HeadingController (control/heading.py)   in: measured yaw, commanded velocity, policy yaw rate
+                                          out: absolute yaw setpoint, slew-limited
+      |
+PPOPolicyAdapter.step  ->  {velocity, yaw_setpoint}   virtual yaw == measured yaw, always
+      |
+EnvelopeMonitor        clamps setpoint slew
+      |
+Backend.set_velocity(velocity, yaw_setpoint)   absolute angle only, NO integrator in any backend
+   Mock: slew to setpoint   AirSim: YawMode(False, deg)   PX4: VelocityNedYaw(.., deg) verbatim
+      |
+VehicleState: one contract, pitch nose-up positive, body_rates present or None, sim == real
+```
+
+| Step | Days | What | Key files |
+|---|---|---|---|
+| 0 | 0.5 | Evidence: log `yaw_virtual_minus_measured_deg` per tick; run the Mock flight from section 6 | `ppo_policy.py:716-720`, runners' tick records |
+| 1 | 1 | Virtual drone yaw copies measured yaw every tick | `ppo_policy.py:370-383`; extend `AiDroneFly/tests/test_ppo_policy.py`, `tests/test_adapter_timing_yawrate.py` |
+| 2 | 3 | Absolute yaw setpoint, one integrator in the adapter; delete PX4 streamer integration and seed logic, Mock integration; AirSim sends `YawMode(False, deg)`; envelope clamps slew | `core/backend.py:50-63`, `px4.py:400-407, 1469-1475, 1573-1593, 1972-1992, 2046-2048`, `mock.py:118-127`, `airsim.py:162-189`, `control/envelope.py:140-149, 353-358`; rewrite `tests/test_px4_setpoint_streamer.py` yaw tests; add backend-parity test |
+| 3 | 2 | `HeadingController` with the three modes; `--heading-mode` on both runners; delete `--yaw-follow`, `applies_yaw_rate`, `yaw_rate_applied`; `policy` mode gated on a `headful` checkpoint flag | new `control/heading.py`, runners, `airsim.py:175-187` |
+| 4 | 2 | One `VehicleState` contract: pitch sign pinned, `body_rates` field, PX4 subscribes `attitude_angular_velocity_body`, AirSim from IMU; adapter negates pitch and fills rates only behind `observe_body_rates=True` | `core/types.py:73-100`, `px4.py:3188-3197`, `ppo_policy.py:163-182`; extend `test_px4_backend.py::test_telemetry_is_converted_from_ned_to_enu` |
+| 5 | 1.5 | Refuse mismatches at load: physics regime (`full_attitude`, `direct_motors`), box vs `reference_box`, dt vs `control_period`; `--allow-off-contract-box` must be explicit and banked | `ppo_policy.py:386-493`, `fly_policy_px4.py` after 1250, `fly_policy_mission.py` after 388, `policy_px4_attended_run.py:166-169` |
+| 6 | 1.5 | One physics reference: parity test GPU legacy Euler vs `Drone3D.update` including roll sign; write `physics_model` into checkpoint meta and export | `ppo_gpu.py:968-974, 3376-3378`, `tools/export_policy_actor.py:494-531`, pattern in `tests/test_physics_v2.py:262` |
+| 7 | 3–5 + GPU | Only if a headful *policy* is wanted: body-frame relative target in slots 0–2 (same dim), `--reward-heading 0.05–0.1`, yaw-rate penalty, train on the Euler reference at a 0.1 s decision period, warm-start from `field_quad_dr_r` with the heading coefficient ramped over the first 20% of iterations, gate on reach, crash and mean yaw-to-course error | `ppo_gpu.py:980-996, 1389-1396`, `train_dqn_headless.state_vector` |
+
+**Contract JSON changes** (`configs/policy_execution_contract_v1.json`):
+`checkpoint_contract.physics_model` and `refused_regimes`;
+`observation_manifest.attitude_convention` (nose-up positive at the boundary,
+negated into slot 8); `translation_modes.common.heading_modes`; replace
+`envelope_limits.implemented.yaw_rate` with `yaw_setpoint`; a
+`control_period.adapter_dt_must_equal` rule.
+
+**How the two options relate.** Option 1 steps A–E are a strict subset of
+Option 2 steps 1, 3, 4 and 5. Nothing in Option 1 is thrown away. Option 2
+step 2 (absolute setpoint everywhere) is the one piece that changes the
+backend contract and should wait until after the Pi transfer.
