@@ -1,215 +1,257 @@
-# Drone Control Architecture Review
+# Dune AI drone control architecture review
 
-**Purpose:** understand why fixing the headless → headful spin behaviour broke
-point‑A‑to‑point‑B navigation, find the structural bottleneck, and decide where
-to fix so we stop chasing one bug into the next.
+**Repository reviewed:** `zwethiha234-svg/dune-ai` at commit `5da87dc` (2026-09-27).
+**Question:** why fixing the headless → head-forward (nose turns) behaviour broke
+point A → point B navigation, where the structural bottleneck is, and what to fix
+first so the fix-one-break-another cycle stops.
 
-**Scope note:** the `zwe` repository currently has no drone source code in it,
-so this review is based on the symptoms described (sim‑vs‑real yaw handling
-fixed, navigation stopped working) and on the standard structure of a
-quadrotor control stack. Section 6 is a checklist to confirm the diagnosis
-against the real code before changing anything.
-
----
-
-## 1. The symptom, translated
-
-| What you saw | What it means structurally |
-|---|---|
-| Headless vs headful spinning differed between sim and real | Two parts of the system disagree about **which frame yaw is expressed in** (world/NED vs body) and/or **which direction is positive**. |
-| "Fixing" the spin made it look right | The correction was applied *somewhere* in the pipeline so the output matched for that one test. |
-| Navigation A → B stopped working afterwards | The place the correction was applied is **shared** with the navigation path, so navigation now receives a rotated/flipped command it did not expect. |
-
-The second bug is not a new bug. It is the first bug moved to a different
-layer. That is the signature of a missing **single frame‑conversion boundary**.
+**Short answer.** The trained policy is a *headless* controller: it sees the
+target in world axes and only learns to tilt the thrust vector given its own
+yaw. Making the vehicle *headful* was done by streaming a yaw rate from a
+virtual airframe that lives inside the adapter and whose heading is never
+re-synchronised with the real vehicle. The moment the real vehicle starts
+following that yaw rate, the adapter's picture of "which way is my nose" and
+the vehicle's real nose diverge, and every subsequent tilt command is computed
+for the wrong heading. Navigation does not fail because navigation is wrong.
+It fails because the adapter is flying a ghost.
 
 ---
 
-## 2. What a clean control stack looks like
-
-Every working drone stack, sim or real, is the same five layers. Each layer
-has **one** input frame and **one** output frame, and frames are only ever
-converted at the boundaries, never inside a layer.
+## 1. The pipeline as it exists today
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ 5. MISSION / NAVIGATION                                      │
-│    "go from A to B"                                          │
-│    Frame: WORLD (NED or ENU – pick one, write it down)       │
-│    Output: desired position / velocity in WORLD              │
-└───────────────┬──────────────────────────────────────────────┘
-                │ world setpoint
-┌───────────────▼──────────────────────────────────────────────┐
-│ 4. OUTER LOOP (position → velocity → acceleration)           │
-│    Frame: WORLD in, WORLD out                                │
-│    Output: desired acceleration / thrust vector in WORLD     │
-└───────────────┬──────────────────────────────────────────────┘
-                │ ***  THE ONLY WORLD→BODY CONVERSION  ***
-                │ uses current yaw (and roll/pitch) from state
-┌───────────────▼──────────────────────────────────────────────┐
-│ 3. ATTITUDE SETPOINT GENERATOR                               │
-│    Frame: BODY                                               │
-│    Output: desired roll, pitch, yaw(-rate), collective thrust│
-└───────────────┬──────────────────────────────────────────────┘
-                │ body setpoint
-┌───────────────▼──────────────────────────────────────────────┐
-│ 2. INNER LOOP (attitude / rate PID)                          │
-│    Frame: BODY in, BODY out                                  │
-│    Output: body torques + thrust                             │
-└───────────────┬──────────────────────────────────────────────┘
-                │ torques / thrust
-┌───────────────▼──────────────────────────────────────────────┐
-│ 1. MIXER + ACTUATORS                                         │
-│    Frame: none (motor space)                                 │
-│    Output: per‑motor commands                                │
-└──────────────────────────────────────────────────────────────┘
-
-                 ▲ STATE ESTIMATE flows back UP
-                 │ position/velocity in WORLD, attitude as quaternion
-                 │ produced by ONE adapter per platform (sim / real)
+MISSION (ENU waypoint A -> B)
+  tools/fly_policy_mission.py / tools/fly_policy_px4.py / tools/airsim_hop_cycle_qa.py
+        |
+        |  VehicleState (ENU pos/vel, Attitude yaw/pitch/roll)   target Vector3 (ENU)
+        v
+ADAPTER   AiDroneFly/src/aidronefly/policies/ppo_policy.py  (PPOPolicyAdapter.step)
+  1. ENU -> drone3d [E, Up, N] remap                          (ppo_policy.py:149-160)
+  2. build 34-slot observation                                (ppo_policy.py:66-92)
+       rel target (WORLD) | vel (WORLD) | sin/cos yaw, pitch, roll | body rates | alt | dist | config | rays
+  3. policy forward  ->  a = [collective, pitch, roll, yaw]   (ppo_policy.py:520-526)
+  4. action -> velocity, ONE of three translations:
+       "velocity":  2-D yaw rotation of (fwd, right) using the REAL measured yaw   (ppo_policy.py:618-631)
+       "physics":   step a persistent VIRTUAL Drone3D with a; command its velocity (ppo_policy.py:528-545)
+                    + yaw_rate_dps = the VIRTUAL drone's yaw rate                  (ppo_policy.py:600-616)
+       "physics_vzlead": physics + vertical lead law
+  5. tracking compensation (K * (last cmd - achieved))         (ppo_policy.py:765-780)
+  6. SafetySupervisor may override                            (ppo_policy.py:721-735)
+        |
+        |  set_velocity(velocity ENU, yaw_rate_dps)
+        v
+BACKEND   AiDroneFly/src/aidronefly/backends/*
+  mock.py     integrates yaw rate into its heading                  (mock.py:121-126)
+  airsim.py   ENU->NED, moveByVelocityAsync; yaw rate IGNORED;
+              optional --yaw-follow = DrivetrainType.ForwardOnly    (airsim.py:162-190)
+  px4.py      ENU->NED, VelocityNedYaw(…, yaw_deg);
+              streamer ON : yaw rate integrated into yaw_deg, seeded from measured heading (px4.py:1568-1592, 2046-2048)
+              streamer OFF: yaw_deg forced to 0 (nose North), yaw rate REFUSED        (px4.py:1433, 1469-1479)
+        |
+        v
+AUTOPILOT / SIM   (AirSim or PX4 velocity + yaw controllers, then motors)
 ```
 
-Two rules make this work:
+The policy was trained in `ppo_gpu.py` on the same `[collective, pitch, roll,
+yaw]` action and the same observation. Training physics is `drone3d.py`
+(Euler, `Ry(yaw)@Rx(pitch)@Rz(roll)`, `drone3d.py:590-607`) or, with
+`--full-attitude`, a quaternion 6-DOF model in `ppo_gpu.py:943-967`.
 
-1. **Frame conversion happens in exactly one place** (the 4→3 boundary).
-   Nothing above it knows about body frame. Nothing below it knows about
-   world frame.
-2. **Platform differences are absorbed in exactly one place**: an adapter
-   that turns the sim's or the real IMU/GPS's data into the *same* state
-   estimate format, and turns the same motor command format into whatever
-   the sim or the ESCs want.
+### Frame conventions (these are actually consistent)
 
-Headless mode and headful mode are then **not** a control‑stack concept at
-all. They are a *pilot input* interpretation that lives at layer 5 ("rotate
-the stick vector by the heading, or don't") and nothing below layer 5 ever
-sees the difference.
+| Layer | Position frame | Yaw convention |
+|---|---|---|
+| Product types | ENU (E, N, Up) | compass: 0 = North, clockwise positive |
+| Training sim (drone3d / ppo_gpu) | [E, Up, N], forward = [sin yaw, 0, cos yaw] | same (clockwise positive by construction) |
+| AirSim / PX4 | NED | same |
 
----
-
-## 3. Where the current design is almost certainly broken
-
-Given the symptom, one or more of these is true. They are listed in order of
-how likely they are to be the root cause.
-
-### 3.1 The yaw/frame fix was applied below the world→body boundary
-
-Most likely. The spin problem was observed at the motor/attitude level, so the
-natural "fix" is to flip a sign or add a rotation in the attitude controller,
-the mixer, or the sim adapter. But those layers are **shared** with navigation.
-Navigation then sends a world‑frame velocity, it gets rotated by the boundary
-*and* again by the patch, and the drone flies the wrong direction or oscillates.
-
-**Tell‑tale sign:** the fix lives in a file that is also on the navigation
-code path (attitude controller, mixer, rate loop, sim bridge).
-
-### 3.2 There is no single state‑estimate contract between sim and real
-
-If the sim provides attitude as Euler ZYX in ENU and the real IMU gives a
-quaternion in NED (or vice‑versa) and each consumer converts for itself, then
-every controller carries its own copy of the conversion. Fix one copy, the
-others are now inconsistent.
-
-**Tell‑tale sign:** more than one place in the code does
-`yaw = atan2(...)` or `if sim: ... else: ...` on orientation data.
-
-### 3.3 Headless/headful logic is tangled into the controller
-
-If "headless" is implemented as a flag checked inside the attitude or velocity
-controller, then the controller behaves differently depending on a pilot‑UX
-setting, and the autonomous navigation path (which should never care about
-headless) inherits that behaviour.
-
-**Tell‑tale sign:** a `headless` boolean appears anywhere below layer 5.
-
-### 3.4 Sign and axis conventions are implicit
-
-NED vs ENU, yaw positive clockwise vs counter‑clockwise, motor numbering
-order, propeller spin direction: if any of these are not written down and
-asserted in code, the sim and the real platform will drift apart and every fix
-will be a guess.
-
-**Tell‑tale sign:** no `conventions` document / module, and tuning constants
-with unexplained negative signs.
-
-### 3.5 Tuning is being done against an untrustworthy plant
-
-"Model tuning" problems are usually not tuning problems. If the frame
-plumbing is wrong, no set of PID gains will work in both environments, and
-the gains that *appear* to work are compensating for a frame error. This is
-why gains keep needing to be re‑tuned after each fix.
+So the raw axis conventions are **not** the bug. The adapter copies
+`drone.yaw = state.attitude.yaw` directly and that is correct. The bug is
+about *which yaw* is used, not how yaw is defined.
 
 ---
 
-## 4. The bottleneck, stated plainly
+## 2. What "headless" and "headful" actually mean in this codebase
 
-> **There is no single, owned boundary where world‑frame intent becomes
-> body‑frame command, and no single adapter that makes sim and real look
-> identical above the mixer.**
+The code never uses those words for yaw. The equivalent concepts are:
 
-Because that boundary is missing or duplicated, every layer has partial
-knowledge of frames, every platform has partial knowledge of conventions, and
-any local fix changes the global behaviour. That is the thing to fix. Not the
-spin, not the navigation, not the gains.
+| Your term | In dune-ai | Where |
+|---|---|---|
+| headless | policy's yaw channel `a[3]` is dropped; vehicle holds whatever heading it has; velocity is world ENU | `translation="velocity"`, or `physics` on AirSim (yaw ignored), or PX4 with streamer off (nose forced North) |
+| headful | vehicle's nose is driven | `--yaw-follow` on AirSim (autopilot points nose along velocity), **or** `translation="physics"` + PX4 streamer on (adapter's virtual yaw rate is streamed) |
+| head-forward reward | training bonus `heading_coef * cos(yaw - course)` | `ppo_gpu.py:1389-1396`, `--reward-heading`, used at 0.02–0.05 in some runs, 0 in others |
+
+That is three different mechanisms, on three different layers, for one
+behaviour. None of them share a definition of "the vehicle's heading".
 
 ---
 
-## 5. Where to fix (in order), and what each step buys
+## 3. Root cause of the A → B regression
 
-| # | Fix | Why first | Debugging it removes |
+### 3.1 The virtual airframe's heading is never re-synchronised (primary)
+
+`_sync_vdrone` (`ppo_policy.py:370-383`) re-syncs **position and velocity**
+from the vehicle every tick and deliberately keeps **attitude, body rates and
+rotor thrusts internal**. The docstring calls that "hidden state the product
+telemetry cannot provide".
+
+That design was fine while the vehicle was headless: the virtual drone's
+yaw could drift anywhere because (a) the observation told the policy the
+virtual yaw, (b) the policy tilted relative to that yaw, (c) the virtual
+physics rotated the tilt into a **world** velocity, and (d) only the world
+velocity reached the vehicle. The real nose was irrelevant. A → B worked.
+
+Switching to headful changed one thing: the vehicle now *also* receives the
+virtual drone's yaw rate. Two problems follow immediately.
+
+- **Two independent yaw integrators.** The virtual drone integrates
+  `yaw += ang_vel[0] * dt` with the adapter's `dt` (0.1 s). The PX4 streamer
+  integrates the same rate with its own `yaw_dt` and its own seed (the measured
+  heading, or 0, or the previous link's heading, `px4.py:1575-1592`). The
+  MockBackend integrates it a third way. Nothing ever compares them. Any
+  difference in seed, period, clamping (the envelope clamps the rate to
+  60 deg/s *after* the virtual drone already turned) or a dropped setpoint
+  makes real heading ≠ virtual heading, and the error accumulates for the rest
+  of the flight.
+- **The policy's yaw channel was never trained to be flown.** With
+  `--reward-heading 0` the policy has no reason to keep `a[3]` quiet; its
+  virtual yaw rate is whatever the mixer happens to produce. Streaming that to
+  a real yaw controller is the spin you saw. Clamping it (the "fix") stops the
+  spin but does not restore agreement between the two headings.
+
+Once the headings disagree, the velocity the adapter sends is still a world
+vector, so why does A → B break? Because the next observation is built from
+the **virtual** attitude, which now describes a vehicle that does not exist,
+and the tracking compensation (`_compensate_velocity`) then fights the
+difference between "what the ghost should have achieved" and "what the real
+vehicle did". Under `velocity` translation the analogous failure is simpler:
+`action_to_velocity` rotates by the *real* yaw while nothing in training
+rewarded the policy for coping with a yaw it does not control.
+
+### 3.2 Yaw behaviour depends on which backend and which flag (secondary)
+
+| Backend | `translation=velocity` | `translation=physics` |
+|---|---|---|
+| Mock | heading never changes | heading follows virtual yaw rate |
+| AirSim | heading holds (or follows velocity with `--yaw-follow`) | yaw rate silently ignored (same as left) |
+| PX4, streamer off | nose forced to North | yaw rate refused (error) |
+| PX4, streamer on | nose forced to North | heading follows integrated yaw rate |
+
+Four physical behaviours for one policy. "It works in sim" and "it fails on
+PX4" are not the same experiment, so every comparison between them is
+confounded. `applies_yaw_rate` is declared `True` on Mock, `False` on AirSim
+and undeclared on PX4 (`fly_policy_mission.py:218-226` reports "unknown").
+
+### 3.3 The observation the policy sees on PX4 is not the one it trained on
+
+Three parity breaks, independent of yaw, each large enough to break A → B
+on its own. They explain why the problem "kind of works" in one place and not
+another.
+
+- **Box scale.** `policy_px4_attended_run.py:166-169` flies the frozen
+  `field_quad_dr_r` candidate without `--city`, so `resolve_bounds`
+  (`fly_policy_mission.py:315-319`) gives the open-space box ±15 m / 0–12 m.
+  The contract's reference box for that run is ±60 m / 0–55 m. Observation
+  slots 0–2 (relative target), 13 (altitude) and 14 (distance) are therefore
+  scaled about 4× differently from training. The board already records a
+  handoff caused by "an off-contract observation box"; nothing in
+  `fly_policy_px4.py` compares its bounds to `observation_manifest.reference_box`.
+- **Pitch sign.** In `drone3d.py:599-611` positive pitch tilts thrust toward
+  +forward, i.e. nose *down*. PX4 and AirSim report positive pitch as nose
+  *up*. `build_drone3d_from_state` (`ppo_policy.py:178`) copies the measured
+  pitch without negating it, so slot 8 has the wrong sign under `velocity`
+  translation and on the first tick of `physics` translation.
+- **Time step.** Training decided every 4 × 1/60 s (66.7 ms); the adapter
+  steps its virtual airframe once per 0.1 s and the PX4 streamer republishes
+  at 20 Hz. The contract records all three numbers and resolves none.
+
+### 3.4 Three physics models for one policy (tertiary)
+
+- `drone3d.py` (CPU Euler, roll `Rz(+roll)`)
+- `ppo_gpu.py` legacy branch (GPU Euler, inline matrix)
+- `ppo_gpu.py --full-attitude` (quaternion, roll `Rz(-roll)`, no tilt clamp)
+
+The adapter always flies the first one. If a checkpoint was trained on the
+second or third, the "faithful physics translation" is faithful to a model the
+policy never saw. The contract documents that `--full-attitude` is a different
+regime, but nothing in the adapter refuses a mismatched checkpoint.
+
+---
+
+## 4. The bottleneck
+
+> **There is no single owner of "the vehicle's heading".** The virtual
+> airframe, the PX4 streamer, the Mock backend, AirSim's drivetrain and the
+> training reward each hold their own, and the policy observes one of them
+> while the motors obey another.
+
+Every patch so far has been applied to one of those owners (clamp the rate,
+rate-limit the turn, force yaw to North, add `--yaw-follow`). Each patch
+makes the two headings agree for one test and disagree for the next.
+
+---
+
+## 5. Where to fix, in order
+
+| # | Change | File(s) | What it removes |
 |---|---|---|---|
-| 1 | **Write the conventions down and assert them.** One file: world frame (NED or ENU), body frame, yaw sign, quaternion order (w,x,y,z or x,y,z,w), motor layout, prop directions. Add startup assertions / unit tests for each. | Everything else depends on it. Takes an hour. | "Is this sign right?" arguments. |
-| 2 | **Build a single `StateEstimate` type and one adapter per platform** (`SimAdapter`, `RealAdapter`) that both produce it. Delete every other sim/real conditional above the mixer. | Makes sim and real indistinguishable to every controller. | "Works in sim, not in real" and vice‑versa. |
-| 3 | **Create one `world_to_body()` function and call it in exactly one place** (outer loop → attitude setpoint). Grep for every other rotation / yaw usage in the control path and delete it. | This is the structural root cause of the A→B regression. | The fix‑one‑break‑another cycle. |
-| 4 | **Move headless/headful entirely to the pilot‑input layer.** It becomes `if headless: stick = rotate(stick, -yaw)` and nothing else. Navigation never sees it. | Decouples UX from control. | Navigation mysteriously affected by RC mode. |
-| 5 | **Re‑tune gains only after 1–4 are done**, inner loop first (rate → attitude), then outer loop (velocity → position), in sim, then confirm on real. | Gains tuned on a correct plant transfer; gains tuned on a frame‑broken plant do not. | Endless re‑tuning. |
+| 1 | **Re-sync the virtual drone's yaw from the measured attitude every tick** (keep pitch/roll/rates internal if you must, but yaw is observable and must be the real one). Add a per-tick evidence field `yaw_virtual_minus_measured_deg` so divergence is visible in every flight record. | `ppo_policy.py:_sync_vdrone` | The ghost heading. This alone most likely restores A → B under headful. |
+| 2 | **Stop integrating yaw rate in the backend.** Have the adapter emit an absolute **yaw setpoint** (its now-synced heading plus rate × dt) and have every backend send that angle. One integrator, in one place, with one dt. | `px4.py` streamer, `mock.py`, `core/backend.py` signature | The second and third integrators and their seed logic. |
+| 3 | **Make heading behaviour a mission-level mode, declared once:** `hold`, `follow_course`, `policy`. The adapter computes the yaw setpoint for the mode; backends only execute. Delete `--yaw-follow`, `applies_yaw_rate` and the "refuse unless streaming" branch. | `fly_policy_mission.py`, `fly_policy_px4.py`, `airsim.py`, `px4.py` | The four-way behaviour table in 3.2. |
+| 4 | **Make the runner refuse an off-contract observation box and negate pitch at the adapter boundary.** Compare the runner's bounds to `observation_manifest.reference_box` at `prepare()`; apply `pitch = -state.attitude.pitch` in `build_drone3d_from_state` with a test pinning the sign. | `fly_policy_px4.py:prepare`, `ppo_policy.py:163-182` | The 4× observation scale error and the wrong-sign pitch slot. |
+| 5 | **Refuse checkpoints whose physics regime does not match the adapter's virtual airframe.** The contract sidecar already records the regime; make `load()` check it. | `ppo_policy.py:load`, `configs/policy_execution_contract_v1.json` | Silent physics-model mismatch. |
+| 6 | **Only then** decide whether the *policy* should be headful: retrain with `--reward-heading > 0` and a yaw-error observation term, or keep it headless with mode `follow_course` handled by the autopilot. Do not tune gains or smoothing before 1–4 are in. | `ppo_gpu.py` | Re-tuning against a plant whose heading is undefined. |
 
-If time allows only one step, do **step 3**. If time allows two, do 1 and 3.
-
----
-
-## 6. Diagnosis checklist (run against the real code before changing it)
-
-Answer each with a file/line reference. Any "more than one" or "not sure" is
-the bottleneck.
-
-- [ ] Where is the world frame defined (NED/ENU)? One place?
-- [ ] How many functions convert world → body or body → world?
-- [ ] Which file contains the headless/headful spin fix? Is it on the
-      navigation code path?
-- [ ] Does navigation output world‑frame velocity, body‑frame velocity, or
-      attitude directly? (It should be world‑frame velocity or position.)
-- [ ] How many places read raw sim orientation vs raw IMU orientation?
-- [ ] Is `headless` referenced anywhere in controller / mixer code?
-- [ ] Are there any negative‑sign tuning constants without a comment
-      explaining the convention they compensate for?
-- [ ] Can the attitude controller be unit‑tested with a hand‑made
-      `StateEstimate` and no sim running? If not, layers are coupled.
+If only one change is possible, do **1**. If two, do 1 and 4 (the box check is
+a one-line guard and may by itself explain the PX4 A → B failure).
 
 ---
 
-## 7. Fast regression tests to keep the problem from coming back
+## 6. Confirm before changing anything
 
-Four tests, each < 50 lines, each runs with no sim and no hardware:
+Run a headful flight on the MockBackend (no simulator needed) and log, per
+tick: virtual yaw, backend-reported yaw, commanded yaw rate, commanded
+velocity, achieved velocity. Expected result if the diagnosis is right: the
+yaw difference grows monotonically after the first few ticks and the
+velocity error grows with it. If the yaw difference stays near zero and A → B
+still fails, the problem is elsewhere (most likely the tracking compensation
+or the vertical lead law) and section 5 step 1 is unnecessary.
 
-1. **Frame round‑trip:** `body_to_world(world_to_body(v, q), q) == v` for
-   random vectors and quaternions.
-2. **Yaw sign:** with yaw = +90°, a world "north" velocity command becomes a
-   body "left" (or "right", per your convention) command. One assert.
-3. **Adapter parity:** feed the sim adapter and the real adapter the same
-   synthetic hover pose; both must emit an identical `StateEstimate`.
-4. **Headless isolation:** with `headless=True` and `headless=False`, a
-   navigation setpoint must produce byte‑identical attitude setpoints.
+A second cheap check: run the same mission with `translation=velocity` and
+with `translation=physics` on the same backend. If only `physics` fails, it
+is the virtual airframe. If both fail, it is the backend yaw path.
 
-Test 4 would have caught the current regression immediately.
+A third, for the PX4 runs specifically: print the adapter's `bounds` next to
+the contract's `reference_box` at `prepare()`. If they differ, fix that
+before reading anything else out of the flight record.
 
 ---
 
-## 8. Summary
+## 7. Regression tests to lock it in
 
-- The spin fix and the navigation breakage are the **same bug** seen from two
-  layers, caused by frame conversion being spread across the stack instead of
-  owned by one boundary.
-- Fix the **structure** (one state type, one world→body conversion, headless
-  only at the input layer) before touching gains again.
-- Confirm with the checklist in section 6, then lock it in with the four
-  tests in section 7.
+1. **Heading agreement:** after N ticks of a yaw-rate-commanding policy on
+   MockBackend, `|virtual_yaw - backend_yaw| < 1 deg`.
+2. **Mode isolation:** the same mission under heading modes `hold` and
+   `follow_course` produces the same position track within tolerance.
+3. **Backend parity:** Mock, AirSim and PX4 backends given the same
+   `set_velocity(v, yaw_setpoint)` sequence record the same yaw setpoint
+   sequence (unit test with fakes; all three already have fakes in `tests/`).
+4. **Regime guard:** loading a `--full-attitude` checkpoint into the Euler
+   adapter is refused with a clear message.
+
+Test 1 would have caught this regression on the day the streamer landed.
+
+---
+
+## 8. Things noticed in passing (not the cause, worth a ticket each)
+
+- `airsim_dqn_preview.py:40-64` feeds raw NED into an `[E, Up, N]`
+  observation. Legacy script, but it will mislead anyone using it to compare.
+- `backends/airsim.py:_quat_to_euler` and `tools/airsim_hop_cycle_qa.py:_rpy_deg`
+  are duplicate quaternion decoders.
+- `tools/sysid_fit.py` and `tools/px4_sih_sysid.py` map east → roll and
+  north → pitch, which is only true at yaw 0. Any sysid flight with a
+  non-zero heading is fitting the wrong axes.
+- Roll sign differs between `drone3d.py` (`Rz(+roll)`) and the quaternion
+  path in `ppo_gpu.py` (`Rz(-roll)`). The comment says they match; this was
+  not verified here.
